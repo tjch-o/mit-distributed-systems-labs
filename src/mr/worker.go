@@ -4,6 +4,9 @@ import "fmt"
 import "log"
 import "net/rpc"
 import "hash/fnv"
+import "io"
+import "os"
+import "encoding/json"
 import "time"
 
 const timeout = time.Second * 10
@@ -57,6 +60,54 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) {
     reply.taskType = "done"
 }
 
+func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapIndex int, nReduce int) {
+	file, err := os.Open(filename)
+	defer file.Close()
+
+	if err != nil {
+		log.Fatalf("Cannot open file %s: %v", filename, err)
+	}
+
+	content, err := io.ReadAll(file)
+
+	if err != nil {
+		log.Fatalf("Cannot read file %s: %v", filename, err)
+	}
+
+	kva := mapf(filename, string(content))
+    intermediate := make([][]KeyValue, nReduce)
+
+	for _, kv := range kva {
+		reduceIndex := ihash(kv.Key) % nReduce
+		intermediate[reduceIndex] = append(intermediate[reduceIndex], kv)
+	}
+
+	for reduceIndex, bucket := range intermediate {
+		intermediateFilename := fmt.Sprintf("mr-%d-%d", mapIndex, reduceIndex)
+		file, err := os.Create(intermediateFilename)
+
+        if err != nil {
+			log.Fatalf("Cannot create intermediate file %s: %v", intermediateFilename, err)
+		}
+
+		enc := json.NewEncoder(file)
+		
+		for _, kv := range bucket {
+			err := enc.Encode(&kv)
+
+			if err != nil {
+				log.Fatalf("Cannot write to intermediate file %s: %v", intermediateFilename, err)
+			}
+		}
+
+		file.Close()
+	}
+}
+
+func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nReduce int) {
+	
+}
+
 
 //
 // main/mrworker.go calls this function.
@@ -65,10 +116,41 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	for {
+		args := GetTaskArgs{}
+		reply := GetTaskReply{}
+	    ok := call("Coordinator.GetTask", &args, &reply)
+
+		if ok {
+			switch (reply.taskType) {
+				case "map":
+					HandleMapTask(mapf, reply.filename, reply.mapIndex, reply.nReduce)
+				case "reduce":
+					HandleReduceTask(reducef, reply.reduceIndex, reply.nReduce)
+				case "wait":
+					time.Sleep(timeout)
+					continue
+				case "done":
+					return
+			}
+		}
+
+		completeTaskArgs := CompleteTaskArgs {
+			taskType: reply.taskType,
+			mapIndex: reply.mapIndex,
+			reduceIndex: reply.reduceIndex,
+		}
+		completeTaskReply := CompleteTaskReply{}
+		ok = call("Coordinator.completeTask", &completeTaskArgs, &completeTaskReply)
+
+		if !ok {
+			log.Println("Failed to report task completion to coordinator")
+			return
+		}
+	}
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
-
 }
 
 //
