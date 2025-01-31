@@ -33,13 +33,13 @@ type GetTaskReply struct {
 	nReduce int
 }
 
-type CompleteTaskArgs {
+type CompleteTaskArgs struct {
 	taskType string
 	mapIndex int
 	reduceIndex int
 }
 
-type CompleteTaskReply {
+type CompleteTaskReply struct {
 	completed bool
 }
 

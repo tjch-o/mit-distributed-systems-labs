@@ -4,7 +4,9 @@ import "fmt"
 import "log"
 import "net/rpc"
 import "hash/fnv"
+import "time"
 
+const timeout = time.Second * 10
 
 //
 // Map functions return a slice of KeyValue.
@@ -22,6 +24,37 @@ func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
+}
+
+func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for i, task := range c.mapTasks {
+		if task.status == Idle {
+			task.status = InProgress
+			c.mapTasks[i] = task
+			reply.mapIndex = i
+			reply.reduceIndex = -1
+			reply.taskType = "map"
+			break
+		}
+	}
+
+	if c.allMapTasksCompleted() {
+		for i, task := range c.reduceTasks {
+			if task.status == Idle {
+				task.status = InProgress
+				c.reduceTasks[i] = task
+				reply.mapIndex = -1
+				reply.reduceIndex = i
+				reply.taskType = "reduce"
+				break
+			}
+		}
+	}
+
+    reply.taskType = "done"
 }
 
 
