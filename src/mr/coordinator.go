@@ -6,28 +6,30 @@ import "os"
 import "net/rpc"
 import "net/http"
 import "sync"
+import "time"
 
 type TaskStatus int
 
-const  (
-	Idle TaskStatus = iota 
+const (
+	Idle TaskStatus = iota
 	InProgress
 	Completed
 )
 
 type Task struct {
-	taskType string
-	status TaskStatus
+	taskType  string
+	status    TaskStatus
+	startTime time.Time
 }
 
 type Coordinator struct {
 	// Your definitions here.
-	mutex sync.Mutex
-	files []string
-	mapTasks []Task
+	mutex       sync.Mutex
+	files       []string
+	mapTasks    []Task
 	reduceTasks []Task
-	nMap int
-	nReduce int
+	nMap        int
+	nReduce     int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -49,7 +51,6 @@ func (c *Coordinator) allReduceTasksCompleted() bool {
 	return true
 }
 
-
 //
 // an example RPC handler.
 //
@@ -59,7 +60,6 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
-
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -105,28 +105,30 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		files: files,
-		mapTasks: make([]Task, len(files)),
+		files:       files,
+		mapTasks:    make([]Task, len(files)),
 		reduceTasks: make([]Task, nReduce),
-		nMap: len(files),
-		nReduce: nReduce,
+		nMap:        len(files),
+		nReduce:     nReduce,
 	}
 
 	// Your code here.
 	i := 0
 	for i < len(files) {
-		c.mapTasks[i] = Task {
-			status: Idle,
-			taskType: "map",
+		c.mapTasks[i] = Task{
+			status:    Idle,
+			taskType:  "map",
+			startTime: time.Time{},
 		}
 		i += 1
 	}
 
 	j := 0
 	for j < nReduce {
-		c.reduceTasks[j] = Task {
-			status: Idle,
-			taskType: "reduce",
+		c.reduceTasks[j] = Task{
+			status:    Idle,
+			taskType:  "reduce",
+			startTime: time.Time{},
 		}
 		j += 1
 	}

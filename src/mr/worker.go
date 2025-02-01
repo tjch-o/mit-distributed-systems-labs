@@ -35,8 +35,25 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	defer c.mutex.Unlock()
 
 	for i, task := range c.mapTasks {
+		if task.status == InProgress && time.Since(task.startTime) > timeout {
+			task.status = Idle
+			c.mapTasks[i] = task
+		}
+	}
+
+	if c.allMapTasksCompleted() {
+		for j, task := range c.reduceTasks {
+			if task.status == InProgress && time.Since(task.startTime) > timeout {
+				task.status = Idle
+				c.reduceTasks[j] = task
+			}
+		}
+	}
+
+	for i, task := range c.mapTasks {
 		if task.status == Idle {
 			task.status = InProgress
+			task.startTime = time.Now()
 			c.mapTasks[i] = task
 			reply.mapIndex = i
 			reply.reduceIndex = -1
@@ -47,8 +64,9 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 	if c.allMapTasksCompleted() {
 		for i, task := range c.reduceTasks {
-			if task.status == Idle {
+			if task.status == Idle && time.Since(task.startTime) > timeout {
 				task.status = InProgress
+				task.startTime = time.Now()
 				c.reduceTasks[i] = task
 				reply.mapIndex = -1
 				reply.reduceIndex = i
@@ -62,6 +80,26 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 		reply.taskType = "done"
 	} else {
 		reply.taskType = "wait"
+	}
+	return nil
+}
+
+func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if args.taskType == "map" {
+		if args.mapIndex != -1 {
+			if c.mapTasks[args.mapIndex].status == InProgress {
+				c.mapTasks[args.mapIndex].status = Completed
+			}
+		}
+	} else if args.taskType == "reduce" {
+		if args.reduceIndex != -1 {
+			if c.reduceTasks[args.reduceIndex].status == InProgress {
+				c.reduceTasks[args.reduceIndex].status = Completed
+			}
+		}
 	}
 	return nil
 }
@@ -80,7 +118,7 @@ func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapInd
 	}
 
 	kva := mapf(filename, string(content))
-    intermediate := make([][]KeyValue, nReduce)
+	intermediate := make([][]KeyValue, nReduce)
 
 	for _, kv := range kva {
 		reduceIndex := ihash(kv.Key) % nReduce
@@ -91,12 +129,12 @@ func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapInd
 		intermediateFilename := fmt.Sprintf("mr-%d-%d", mapIndex, reduceIndex)
 		file, err := os.Create(intermediateFilename)
 
-        if err != nil {
+		if err != nil {
 			log.Fatalf("Cannot create intermediate file %s: %v", intermediateFilename, err)
 		}
 
 		enc := json.NewEncoder(file)
-		
+
 		for _, kv := range bucket {
 			err := enc.Encode(&kv)
 
@@ -108,12 +146,12 @@ func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapInd
 		file.Close()
 	}
 
-	args := CompleteTaskArgs {
-		taskType: "map",
-		mapIndex: mapIndex,
+	args := CompleteTaskArgs{
+		taskType:    "map",
+		mapIndex:    mapIndex,
 		reduceIndex: -1,
 	}
-	reply := CompleteTaskReply {}
+	reply := CompleteTaskReply{}
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 
 	if !ok {
@@ -133,21 +171,21 @@ func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nR
 
 		dec := json.NewDecoder(file)
 		for {
-		    var kv KeyValue
-		    if err := dec.Decode(&kv); err != nil {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
 				break
-		  }
-		  kva = append(kva, kv)
+			}
+			kva = append(kva, kv)
 		}
 
 		file.Close()
 	}
 
-	sort.Slice(kva, func (i int, j int) bool {
+	sort.Slice(kva, func(i int, j int) bool {
 		return kva[i].Key < kva[j].Key
 	})
 
-    outputFilename := fmt.Sprintf("mr-out-%d", reduceIndex)
+	outputFilename := fmt.Sprintf("mr-out-%d", reduceIndex)
 	file, err := os.Create(outputFilename)
 
 	if err != nil {
@@ -169,22 +207,21 @@ func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nR
 
 		output := reducef(kva[i].Key, values)
 		fmt.Fprintf(file, "%v %v\n", kva[i].Key, output)
-        i = j
+		i = j
 	}
 
-	args := CompleteTaskArgs {
-		taskType: "reduce",
-		mapIndex: -1,
+	args := CompleteTaskArgs{
+		taskType:    "reduce",
+		mapIndex:    -1,
 		reduceIndex: reduceIndex,
 	}
-	reply := CompleteTaskReply {}
+	reply := CompleteTaskReply{}
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 
 	if !ok {
 		log.Println("Failed to report map task completion to coordinator")
 	}
 }
-
 
 //
 // main/mrworker.go calls this function.
@@ -196,25 +233,25 @@ func Worker(mapf func(string, string) []KeyValue,
 	for {
 		args := GetTaskArgs{}
 		reply := GetTaskReply{}
-	    ok := call("Coordinator.GetTask", &args, &reply)
+		ok := call("Coordinator.GetTask", &args, &reply)
 
 		if ok {
-			switch (reply.taskType) {
-				case "map":
-					HandleMapTask(mapf, reply.filename, reply.mapIndex, reply.nReduce)
-				case "reduce":
-					HandleReduceTask(reducef, reply.reduceIndex, reply.nReduce)
-				case "wait":
-					time.Sleep(timeout)
-					continue
-				case "done":
-					return
+			switch reply.taskType {
+			case "map":
+				HandleMapTask(mapf, reply.filename, reply.mapIndex, reply.nReduce)
+			case "reduce":
+				HandleReduceTask(reducef, reply.reduceIndex, reply.nReduce)
+			case "wait":
+				time.Sleep(timeout)
+				continue
+			case "done":
+				return
 			}
 		}
 
-		completeTaskArgs := CompleteTaskArgs {
-			taskType: reply.taskType,
-			mapIndex: reply.mapIndex,
+		completeTaskArgs := CompleteTaskArgs{
+			taskType:    reply.taskType,
+			mapIndex:    reply.mapIndex,
 			reduceIndex: reply.reduceIndex,
 		}
 		completeTaskReply := CompleteTaskReply{}
