@@ -6,6 +6,7 @@ import "net/rpc"
 import "hash/fnv"
 import "io"
 import "os"
+import "sort"
 import "encoding/json"
 import "time"
 
@@ -29,7 +30,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) {
+func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -40,7 +41,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) {
 			reply.mapIndex = i
 			reply.reduceIndex = -1
 			reply.taskType = "map"
-			break
+			return nil
 		}
 	}
 
@@ -52,17 +53,21 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) {
 				reply.mapIndex = -1
 				reply.reduceIndex = i
 				reply.taskType = "reduce"
-				break
+				return nil
 			}
 		}
 	}
 
-    reply.taskType = "done"
+	if c.allMapTasksCompleted() && c.allReduceTasksCompleted() {
+		reply.taskType = "done"
+	} else {
+		reply.taskType = "wait"
+	}
+	return nil
 }
 
 func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapIndex int, nReduce int) {
 	file, err := os.Open(filename)
-	defer file.Close()
 
 	if err != nil {
 		log.Fatalf("Cannot open file %s: %v", filename, err)
@@ -102,10 +107,82 @@ func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapInd
 
 		file.Close()
 	}
+
+	args := CompleteTaskArgs {
+		taskType: "map",
+		mapIndex: mapIndex,
+		reduceIndex: -1,
+	}
+	reply := CompleteTaskReply {}
+	ok := call("Coordinator.CompleteTask", &args, &reply)
+
+	if !ok {
+		log.Println("Failed to report map task completion to coordinator")
+	}
 }
 
 func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nReduce int) {
-	
+	var kva []KeyValue
+	for mapIndex := 0; mapIndex < nReduce; mapIndex += 1 {
+		intermediateFilename := fmt.Sprintf("mr-%d-%d", mapIndex, reduceIndex)
+		file, err := os.Open(intermediateFilename)
+
+		if err != nil {
+			log.Fatalf("Cannot open intermediate file %s: %v", intermediateFilename, err)
+		}
+
+		dec := json.NewDecoder(file)
+		for {
+		    var kv KeyValue
+		    if err := dec.Decode(&kv); err != nil {
+				break
+		  }
+		  kva = append(kva, kv)
+		}
+
+		file.Close()
+	}
+
+	sort.Slice(kva, func (i int, j int) bool {
+		return kva[i].Key < kva[j].Key
+	})
+
+    outputFilename := fmt.Sprintf("mr-out-%d", reduceIndex)
+	file, err := os.Create(outputFilename)
+
+	if err != nil {
+		log.Fatalf("Cannot create intermediate file %s: %v", outputFilename, err)
+	}
+
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j += 1
+		}
+
+		var values []string
+		for k := i; k < j; k += 1 {
+			values = append(values, kva[k].Value)
+		}
+
+		output := reducef(kva[i].Key, values)
+		fmt.Fprintf(file, "%v %v\n", kva[i].Key, output)
+        i = j
+	}
+
+	args := CompleteTaskArgs {
+		taskType: "reduce",
+		mapIndex: -1,
+		reduceIndex: reduceIndex,
+	}
+	reply := CompleteTaskReply {}
+	ok := call("Coordinator.CompleteTask", &args, &reply)
+
+	if !ok {
+		log.Println("Failed to report map task completion to coordinator")
+	}
 }
 
 

@@ -40,6 +40,16 @@ func (c *Coordinator) allMapTasksCompleted() bool {
 	return true
 }
 
+func (c *Coordinator) allReduceTasksCompleted() bool {
+	for _, task := range c.reduceTasks {
+		if task.status != Completed {
+			return false
+		}
+	}
+	return true
+}
+
+
 //
 // an example RPC handler.
 //
