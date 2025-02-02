@@ -17,6 +17,7 @@ const (
 )
 
 type Task struct {
+	filename  string
 	taskType  string
 	status    TaskStatus
 	startTime time.Time
@@ -116,6 +117,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	i := 0
 	for i < len(files) {
 		c.mapTasks[i] = Task{
+			filename: files[i],
 			status:    Idle,
 			taskType:  "map",
 			startTime: time.Time{},

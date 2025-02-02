@@ -30,6 +30,7 @@ type GetTaskReply struct {
 	TaskType    string
 	MapIndex    int
 	ReduceIndex int
+	NMap int
 	NReduce     int
 }
 

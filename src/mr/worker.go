@@ -55,9 +55,12 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			task.status = InProgress
 			task.startTime = time.Now()
 			c.mapTasks[i] = task
+			reply.Filename = task.filename
 			reply.MapIndex = i
 			reply.ReduceIndex = -1
 			reply.TaskType = "map"
+			reply.NMap = c.nMap
+			reply.NReduce = c.nReduce
 			return nil
 		}
 	}
@@ -71,6 +74,8 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 				reply.MapIndex = -1
 				reply.ReduceIndex = i
 				reply.TaskType = "reduce"
+				reply.NMap = c.nMap
+			    reply.NReduce = c.nReduce
 				return nil
 			}
 		}
@@ -161,9 +166,9 @@ func HandleMapTask(mapf func(string, string) []KeyValue, filename string, mapInd
 	}
 }
 
-func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nReduce int) {
+func HandleReduceTask(reducef func(string, []string) string, reduceIndex int, nMap int, nReduce int) {
 	var kva []KeyValue
-	for mapIndex := 0; mapIndex < nReduce; mapIndex += 1 {
+	for mapIndex := 0; mapIndex < nMap; mapIndex += 1 {
 		intermediateFilename := fmt.Sprintf("mr-%d-%d", mapIndex, reduceIndex)
 		file, err := os.Open(intermediateFilename)
 
@@ -242,7 +247,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			case "map":
 				HandleMapTask(mapf, reply.Filename, reply.MapIndex, reply.NReduce)
 			case "reduce":
-				HandleReduceTask(reducef, reply.ReduceIndex, reply.NReduce)
+				HandleReduceTask(reducef, reply.ReduceIndex, reply.NMap, reply.NReduce)
 			case "wait":
 				time.Sleep(timeout)
 				continue
