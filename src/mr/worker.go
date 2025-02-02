@@ -64,7 +64,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 	if c.allMapTasksCompleted() {
 		for i, task := range c.reduceTasks {
-			if task.status == Idle && time.Since(task.startTime) > timeout {
+			if task.status == Idle {
 				task.status = InProgress
 				task.startTime = time.Now()
 				c.reduceTasks[i] = task
@@ -249,19 +249,6 @@ func Worker(mapf func(string, string) []KeyValue,
 			case "done":
 				return
 			}
-		}
-
-		completeTaskArgs := CompleteTaskArgs{
-			TaskType:    reply.TaskType,
-			MapIndex:    reply.MapIndex,
-			ReduceIndex: reply.ReduceIndex,
-		}
-		completeTaskReply := CompleteTaskReply{}
-		ok = call("Coordinator.completeTask", &completeTaskArgs, &completeTaskReply)
-
-		if !ok {
-			log.Println("Failed to report task completion to coordinator")
-			return
 		}
 	}
 
