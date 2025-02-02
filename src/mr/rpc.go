@@ -26,21 +26,21 @@ type ExampleReply struct {
 type GetTaskArgs struct{}
 
 type GetTaskReply struct {
-	filename    string
-	taskType    string
-	mapIndex    int
-	reduceIndex int
-	nReduce     int
+	Filename    string
+	TaskType    string
+	MapIndex    int
+	ReduceIndex int
+	NReduce     int
 }
 
 type CompleteTaskArgs struct {
-	taskType    string
-	mapIndex    int
-	reduceIndex int
+	TaskType    string
+	MapIndex    int
+	ReduceIndex int
 }
 
 type CompleteTaskReply struct {
-	completed bool
+	Completed bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name
